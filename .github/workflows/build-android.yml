@@ -1,11 +1,22 @@
 name: Build Android APK
 on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'screenshots/**'
+      - 'maestro/**'
   pull_request:
     paths:
       - '.github/workflows/build-android.yml'
       - 'android/**'
       - 'package.json'
-
+  workflow_dispatch:
+    inputs:
+      all-abis:
+        description: 'Build every CPU architecture (slow). Default is arm64 only, which covers all modern phones.'
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -13,7 +24,9 @@ concurrency:
 
 jobs:
   build-android:
-    runs-on: [macos-latest]
+    # Android builds do not need macOS, and Linux minutes are 10x cheaper on private repos
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: 🛒 Checkout
         uses: actions/checkout@v6
@@ -23,61 +36,48 @@ jobs:
         with:
           bun-version: 1.3.4
 
-      - name: 💎 Set up Ruby
-        uses: ruby/setup-ruby@v1
+      - name: ☕ Setup Java
+        uses: actions/setup-java@v4
         with:
-            ruby-version: '3.0'  # Match your local Ruby version
-            bundler-cache: true
+          distribution: temurin
+          java-version: '17'
+
+      - name: 🐘 Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
 
       - name: 💬 Echo package.json version to Github ENV
         run: echo VERSION_NUMBER=$(bun -p "require('./package.json').version") >> $GITHUB_ENV
 
       - name: 🔑 Decode and setup release keystore
-        continue-on-error: true
+        env:
+          ANDROID_SIGNING_BASE64: ${{ secrets.ANDROID_SIGNING_BASE64 }}
         run: |
-          if [ -n "${{ secrets.ANDROID_SIGNING_BASE64 }}" ]; then
-            echo "${{ secrets.ANDROID_SIGNING_BASE64 }}" | base64 --decode > android/app/jellify.keystore
+          if [ -n "$ANDROID_SIGNING_BASE64" ]; then
+            echo "$ANDROID_SIGNING_BASE64" | base64 --decode > android/app/jellify.keystore
             echo "Release keystore created"
           else
-            echo "No keystore secret found, will use debug keystore"
+            echo "No keystore secret found, the APK will be signed with the debug keystore"
           fi
 
+      - name: 🤖 Install dependencies
+        run: bun install --frozen-lockfile
 
-      - name: 📦 Cache node_modules
-        uses: actions/cache@v6
-        with:
-          path: node_modules
-          key: ${{ runner.os }}-node_modules-${{ hashFiles('**/bun.lock', 'patches/**') }}
-
-      - uses: actions/cache@v6
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-            ~/.cache/turbo
-            android/.gradle
-            android/app/build
-          key: ${{ runner.os }}-gradle-turbo-${{ hashFiles('**/build.gradle') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-turbo-
-
-      - name: 🤖 Run bun init-android
-        run: bun i
-
-      - name: 🚀 Run turbo build
-        run: bun android-build
+      - name: 🚀 Build release APK
         env:
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ABIS: ${{ inputs.all-abis && 'armeabi-v7a,arm64-v8a,x86,x86_64' || 'arm64-v8a' }}
+        run: |
+          cd android
+          ./gradlew generateCodegenArtifactsFromSchema assembleRelease \
+            -PreactNativeArchitectures="$ABIS" \
+            -Dorg.gradle.jvmargs="-Xmx5g -XX:MaxMetaspaceSize=1g"
 
-
-      - name: 📦 Upload APK for testing
+      - name: 📦 Upload APK
         uses: actions/upload-artifact@v7
-        if: always()
         with:
-          name: jellify-android-pr-${{ github.event.number }}-${{ env.VERSION_NUMBER }}
-          path: |
-            android/app/build/outputs/apk/release/*.apk
-          retention-days: 7
-          if-no-files-found: warn
+          name: jellify-android-${{ env.VERSION_NUMBER }}-run${{ github.run_number }}
+          path: android/app/build/outputs/apk/release/*.apk
+          retention-days: 14
+          if-no-files-found: error

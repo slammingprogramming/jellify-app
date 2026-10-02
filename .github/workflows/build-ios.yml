@@ -1,20 +1,26 @@
 name: Build iOS IPA
 on:
-  workflow_dispatch:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'screenshots/**'
+      - 'maestro/**'
   pull_request:
     paths:
       - '.github/workflows/build-ios.yml'
       - 'ios/**'
       - 'package.json'
-
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
+
 jobs:
   build-ios:
-    if: github.repository == 'Jellify-Music/App'
-    runs-on: [macos-latest]
+    runs-on: macos-latest
+    timeout-minutes: 90
     steps:
       - name: 🛒 Checkout
         uses: actions/checkout@v6
@@ -30,39 +36,41 @@ jobs:
       - name: 🍎 Setup Xcode
         uses: ./.github/actions/setup-xcode
 
-      - name: 🍎 Run bun init-ios:new-arch
-        run: bun run init-android && cd ios && bundle install &&  bundle exec pod install
+      - name: 🍎 Install dependencies and pods
+        run: bun run init-ios:new-arch
 
-
-      - name: 🚀 Run fastlane build
+      # The project is configured to sign with the original maintainer's Apple team, which cannot
+      # work here. Build unsigned: AltStore / Sideloadly re-sign the .ipa with your own Apple ID.
+      - name: 🚀 Build unsigned app for iOS devices
         run: |
           cd ios
           set -o pipefail
           xcodebuild \
-            CC=clang CPLUSPLUS=clang++ LD=clang LDPLUSPLUS=clang++ \
-            -derivedDataPath build -UseModernBuildSystem=YES \
             -workspace Jellify.xcworkspace \
             -scheme 'Jellify - Release' \
-            -sdk iphonesimulator \
             -configuration Release \
-            -destination 'generic/platform=iOS Simulator' \
-            build \
-            CODE_SIGNING_ALLOWED=NO
-      - name: Package .app for Simulator
-        run: |
-          cd ios/build/Build/Products/Release-iphonesimulator
-          zip -r Jellify-Release-Simulator.zip Jellify.app
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            build
 
-      - name: 📦 Upload IPA for testing
+      - name: 📦 Package unsigned .ipa
+        run: |
+          cd ios/build/Build/Products/Release-iphoneos
+          ls
+          rm -rf Payload && mkdir Payload
+          cp -R Jellify.app Payload/
+          zip -qry Jellify-unsigned.ipa Payload
+
+      - name: 📤 Upload IPA
         uses: actions/upload-artifact@v7
-        if: always()
         with:
-          name: jellify-ios-pr-${{ github.event.number }}-${{ env.VERSION_NUMBER }}
-          path: |
-            ios/build/*.ipa
-            ios/*.ipa
-            Jellify.app
-            *.zip
-            ios/build/Build/Products/Release-iphonesimulator/Jellify-Release-Simulator.zip
-          retention-days: 7
-          if-no-files-found: warn
+          name: jellify-ios-unsigned-${{ env.VERSION_NUMBER }}-run${{ github.run_number }}
+          path: ios/build/Build/Products/Release-iphoneos/Jellify-unsigned.ipa
+          retention-days: 14
+          if-no-files-found: error
