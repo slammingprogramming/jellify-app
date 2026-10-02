@@ -1,11 +1,12 @@
 name: Build iOS IPA
 on:
   push:
-    branches: [main, claude/admiring-mccarthy-m27kgj] # TEMP: remove after testing
+    branches: [main]
     paths-ignore:
       - '**/*.md'
       - 'screenshots/**'
       - 'maestro/**'
+      - 'android/**'
   pull_request:
     paths:
       - '.github/workflows/build-ios.yml'
@@ -18,7 +19,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      skip: ${{ steps.skip.outputs.skip }}
+    steps:
+      - name: 🛒 Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+
+      - name: 🔎 Skip if this exact content was already built
+        id: skip
+        uses: ./.github/actions/skip-if-built
+        with:
+          workflow-file: build-ios.yml
+          token: ${{ secrets.GITHUB_TOKEN }}
+
   build-ios:
+    needs: check
+    if: needs.check.outputs.skip != 'true'
     runs-on: macos-latest
     timeout-minutes: 90
     steps:
