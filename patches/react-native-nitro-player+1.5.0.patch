@@ -1,0 +1,19 @@
+diff --git a/node_modules/react-native-nitro-player/ios/core/TrackPlayerListener.swift b/node_modules/react-native-nitro-player/ios/core/TrackPlayerListener.swift
+index 0d18926..b07df21 100644
+--- a/node_modules/react-native-nitro-player/ios/core/TrackPlayerListener.swift
++++ b/node_modules/react-native-nitro-player/ios/core/TrackPlayerListener.swift
+@@ -417,8 +417,12 @@ extension TrackPlayerCore {
+           // only on a genuine track change (currentItemDidChange) or a real network
+           // restore (handleNetworkRestored).
+           self?.setupBoundaryTimeObserver()
+-          // First item is buffered and ready — disable stall waiting for gapless inter-track transitions
+-          self?.player?.automaticallyWaitsToMinimizeStalling = false
++          // Only downloaded (local file) items skip stall waiting. Streamed items keep AVPlayer's own
++          // stall handling: with waiting disabled, a network underrun leaves the player paused at
++          // rate 0, and pressing play restarts it on an empty buffer, which stalls again at once.
++          // Set per item so a local track can't leave waiting disabled for the streamed ones after it.
++          let isLocalFile = (item.asset as? AVURLAsset)?.url.isFileURL ?? false
++          self?.player?.automaticallyWaitsToMinimizeStalling = !isLocalFile
+           // Update now playing info now that duration is available (capture on playerQueue first)
+           let state = self?.getStateInternal()
+           let queue = self?.getActualQueueInternal() ?? []
