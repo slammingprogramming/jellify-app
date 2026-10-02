@@ -1,5 +1,7 @@
 import reportPlaybackProgress from '../../../api/mutations/playback/functions/playback-progress'
 import { usePlayerPlaybackStore } from '../../../stores/player/playback'
+import { usePlayerDurationStore } from '../../../stores/player/duration'
+import { resolveTotalDuration } from '../../../player'
 import { usePlayerQueueStore } from '../../../stores/player/queue'
 import { TrackPlayer, Reason, TrackPlayerState, TrackItem } from 'react-native-nitro-player'
 import handleAutoDownload from './auto-download'
@@ -84,6 +86,10 @@ export async function onChangeTrack(track: TrackItem, reason?: Reason) {
 
 	trackMarkedAsListened = false
 
+	// The previous track's measured duration no longer applies. Until the player measures the
+	// new one, the duration falls back to the track's metadata.
+	usePlayerDurationStore.setState({ duration: 0 })
+
 	const updatedIndex = queue.findIndex((t) => t.id === track.id)
 
 	// Update the store immediately so the UI reflects the new track without waiting for network
@@ -129,13 +135,19 @@ export async function onPlaybackProgress(position: number, totalDuration: number
 		position,
 	})
 
+	// The player reports a duration of 0 when it can't (yet) determine one, e.g. for a stream of
+	// unknown length. Dividing by that would make every track look completed straight away.
+	const duration = resolveTotalDuration(totalDuration, currentTrack.duration)
+
+	usePlayerDurationStore.setState({ duration: totalDuration })
+
 	// Mark the track as completed if 2/3s of the track has been completed
-	if (position > (totalDuration / 3) * 2 && !trackMarkedAsListened) {
+	if (duration > 0 && position > (duration / 3) * 2 && !trackMarkedAsListened) {
 		reportPlaybackCompleted(currentTrack)
 		trackMarkedAsListened = true
 	}
 
-	handleAutoDownload(position, totalDuration, currentTrack).catch((error) => {
+	handleAutoDownload(position, duration, currentTrack).catch((error) => {
 		captureError(
 			error,
 			LoggingContext.AutoDownload,
