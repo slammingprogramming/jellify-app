@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native-nitro-player/ios/core/TrackPlayerListener.swift b/node_modules/react-native-nitro-player/ios/core/TrackPlayerListener.swift
-index 0d18926..b07df21 100644
+index 0d18926..b19486f 100644
 --- a/node_modules/react-native-nitro-player/ios/core/TrackPlayerListener.swift
 +++ b/node_modules/react-native-nitro-player/ios/core/TrackPlayerListener.swift
 @@ -417,8 +417,12 @@ extension TrackPlayerCore {
@@ -17,3 +17,64 @@ index 0d18926..b07df21 100644
            // Update now playing info now that duration is available (capture on playerQueue first)
            let state = self?.getStateInternal()
            let queue = self?.getActualQueueInternal() ?? []
+@@ -438,9 +442,13 @@ extension TrackPlayerCore {
+     currentItemObservers.append(statusObserver)
+ 
+     let bufferEmptyObserver = item.observe(\.isPlaybackBufferEmpty, options: [.new]) { [weak self] item, _ in
+-      if item.isPlaybackBufferEmpty {
++      guard item.isPlaybackBufferEmpty else { return }
++      // KVO fires on an arbitrary thread, and emitStateChange reads playerQueue-owned
++      // state (currentTracks, temp queues, isRecoveringFromStall), so hop first.
++      self?.playerQueue.async {
++        guard let self, self.player?.currentItem === item else { return }
+         NitroPlayerLogger.log("TrackPlayerCore", "⏸️ Buffer empty (buffering)")
+-        self?.emitStateChange()
++        self.emitStateChange()
+       }
+     }
+     currentItemObservers.append(bufferEmptyObserver)
+diff --git a/node_modules/react-native-nitro-player/ios/core/TrackPlayerQueueBuild.swift b/node_modules/react-native-nitro-player/ios/core/TrackPlayerQueueBuild.swift
+index aa4edc8..69d91c7 100644
+--- a/node_modules/react-native-nitro-player/ios/core/TrackPlayerQueueBuild.swift
++++ b/node_modules/react-native-nitro-player/ios/core/TrackPlayerQueueBuild.swift
+@@ -505,20 +505,21 @@ extension TrackPlayerCore {
+ 
+   /// Preloads assets for upcoming tracks to enable gapless playback
+   func preloadUpcomingTracks(from startIndex: Int) {
+-    // Capture the set of track IDs that already have AVPlayerItems in the queue.
++    // Snapshot every piece of playerQueue-owned state HERE (we are on playerQueue).
++    // `preloadQueue` must never touch currentTracks / preloadedAssets directly:
++    // Swift Array/Dictionary are not safe for concurrent access, and switching tracks
++    // quickly mutates both on playerQueue while this closure is still reading them.
+     let queuedTrackIds = Set(player?.items().compactMap { $0.trackId } ?? [])
++    let alreadyPreloaded = Set(preloadedAssets.keys)
++    let endIndex = min(startIndex + Constants.gaplessPreloadCount, currentTracks.count)
++    guard startIndex >= 0, startIndex < endIndex else { return }
++    let candidates = Array(currentTracks[startIndex..<endIndex])
+ 
+     preloadQueue.async { [weak self] in
+       guard let self else { return }
+ 
+-      let tracks = self.currentTracks
+-      let endIndex = min(startIndex + Constants.gaplessPreloadCount, tracks.count)
+-
+-      for i in startIndex..<endIndex {
+-        guard i < tracks.count else { break }
+-        let track = tracks[i]
+-
+-        if self.preloadedAssets[track.id] != nil || queuedTrackIds.contains(track.id) {
++      for track in candidates {
++        if alreadyPreloaded.contains(track.id) || queuedTrackIds.contains(track.id) {
+           continue
+         }
+ 
+@@ -567,7 +568,8 @@ extension TrackPlayerCore {
+ 
+     let assetsToRemove = self.preloadedAssets.keys.filter { !keepIds.contains($0) }
+     for id in assetsToRemove {
+-      self.preloadedAssets.removeValue(forKey: id)
++      // Cancel before dropping the last reference so an unfinished load doesn't keep running
++      self.preloadedAssets.removeValue(forKey: id)?.cancelLoading()
+     }
+ 
+     if !assetsToRemove.isEmpty {

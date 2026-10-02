@@ -10,6 +10,7 @@ import applyAudioNormalizationIfEnabled from '../../../utils/audio/normalization
 import { captureError } from '../../../utils/logging'
 import LoggingContext from '../../../utils/logging/enums'
 import { updateTrackMediaInfo } from './track-media-info'
+import { reportPlaybackDiagnostics } from './playback-diagnostics'
 import reportPlaybackCompleted from '../../../api/mutations/playback/functions/playback-completed'
 import { AppState, Platform } from 'react-native'
 import reportPlaybackStarted from '../../../api/mutations/playback/functions/playback-started'
@@ -171,6 +172,8 @@ export function onPlaybackStateChange(state: TrackPlayerState, reason: Reason | 
 
 	const prevState = currentPlaybackState
 	currentPlaybackState = state
+
+	if (currentTrack) reportPlaybackDiagnostics(state, reason, currentTrack)
 
 	if (!currentTrack || reason === 'skip') return
 
