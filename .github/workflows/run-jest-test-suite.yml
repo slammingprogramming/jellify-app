@@ -21,15 +21,17 @@ jobs:
         with:
           bun-version: 1.3.4
 
-      - name: 📦 bun install cache
+      # Do not cache ~/.bun/install/cache here: bun hard-links packages from it into node_modules,
+      # and patch-package edits those files in place, so the cache ends up holding already-patched
+      # packages and later fresh installs fail to apply the patches. The key is also new on purpose,
+      # so the polluted entry saved under the old "-bun-" key is never restored.
+      - name: 📦 Jest cache
         uses: actions/cache@v6
         with:
-          path: |
-            ~/.bun/install/cache
-            .jest-cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
+          path: .jest-cache
+          key: ${{ runner.os }}-jest-${{ hashFiles('**/bun.lock') }}
           restore-keys: |
-            ${{ runner.os }}-bun-
+            ${{ runner.os }}-jest-
 
       - name: 📦 Cache node_modules
         uses: actions/cache@v6
