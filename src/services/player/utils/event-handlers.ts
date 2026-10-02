@@ -3,6 +3,7 @@ import { usePlayerPlaybackStore } from '../../../stores/player/playback'
 import { usePlayerDurationStore } from '../../../stores/player/duration'
 import { resolveTotalDuration } from '../../../player'
 import { usePlayerQueueStore } from '../../../stores/player/queue'
+import { findCurrentTrackIndex } from '../../../player/utils/queue'
 import { TrackPlayer, Reason, TrackPlayerState, TrackItem } from 'react-native-nitro-player'
 import handleAutoDownload from './auto-download'
 import applyAudioNormalizationIfEnabled from '../../../utils/audio/normalization'
@@ -78,7 +79,7 @@ export async function onTracksNeedUpdate(tracks: TrackItem[], lookahead: number)
  * track, depending on if the user listened past the detection threshold (80%)
  *
  * @param track The {@link TrackItem} the currently playing track
- * @param _reason The {@link Reason} for the track changing
+ * @param reason The {@link Reason} for the track changing
  */
 export async function onChangeTrack(track: TrackItem, reason?: Reason) {
 	// Grab snapshot of the previous track and playback position for reporting
@@ -90,7 +91,7 @@ export async function onChangeTrack(track: TrackItem, reason?: Reason) {
 	// new one, the duration falls back to the track's metadata.
 	usePlayerDurationStore.setState({ duration: 0 })
 
-	const updatedIndex = queue.findIndex((t) => t.id === track.id)
+	const updatedIndex = findCurrentTrackIndex(queue, track.id, prevIndex, reason)
 
 	// Update the store immediately so the UI reflects the new track without waiting for network
 	usePlayerQueueStore.setState((state) => ({

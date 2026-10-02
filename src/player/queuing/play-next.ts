@@ -67,8 +67,26 @@ const playNextInQueue = async ({ tracks }: AddToQueueMutation) => {
 		...state,
 		currentIndex: updatedIndex,
 		queue: [...updatedQueue],
-		unShuffledQueue: [...state.unShuffledQueue, ...newTracks],
+		unShuffledQueue: appendMissingTracks(state.unShuffledQueue, newTracks),
 	}))
+}
+
+/**
+ * Appends the tracks that are not in the list yet. A track that was only moved up in the queue
+ * is already in the unshuffled queue, adding it again would restore it twice when un-shuffling.
+ */
+function appendMissingTracks(tracks: TrackItem[], newTracks: TrackItem[]): TrackItem[] {
+	const knownIds = new Set(tracks.map((track) => track.id))
+
+	return [
+		...tracks,
+		...newTracks.filter((track) => {
+			if (knownIds.has(track.id)) return false
+
+			knownIds.add(track.id)
+			return true
+		}),
+	]
 }
 
 async function reorderPlayNextTracksInQueue(

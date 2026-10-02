@@ -634,8 +634,36 @@ describe('Queue - playNextInQueue', () => {
 		})
 
 		expect(nextState.queue).toEqual(updatedQueue)
-		// newTracks (track b) is appended to unShuffledQueue
-		expect(nextState.unShuffledQueue).toEqual([trackA, trackB, trackC, trackB])
+		// track b was only moved, it is already in unShuffledQueue and must not be added again
+		expect(nextState.unShuffledQueue).toEqual([trackA, trackB, trackC])
+	})
+
+	it('adds a track that was not queued yet to unShuffledQueue exactly once', async () => {
+		const trackA = createTrack('a')
+		const trackB = createTrack('b')
+		const trackD = createTrack('d')
+
+		mockGetState.mockReturnValue({
+			currentIndex: 0,
+			queue: [trackA, trackB],
+			unShuffledQueue: [trackA, trackB],
+		})
+
+		;(TrackPlayer.getActualQueue as jest.Mock).mockResolvedValue([trackA, trackD, trackB])
+
+		// d is new, b is already queued
+		const dtos: BaseItemDto[] = [{ Id: 'd' } as BaseItemDto, { Id: 'b' } as BaseItemDto]
+
+		await playNextInQueue({ tracks: dtos, queuingType: QueuingType.PlayNext })
+
+		const stateUpdater = mockSetState.mock.calls[0][0]
+		const nextState = stateUpdater({ unShuffledQueue: [trackA, trackB] })
+
+		expect(nextState.unShuffledQueue.map((track: TrackItem) => track.id)).toEqual([
+			'a',
+			'b',
+			'd',
+		])
 	})
 })
 

@@ -82,6 +82,33 @@ jobs:
             PROVISIONING_PROFILE_SPECIFIER="" \
             build
 
+      # Catch an app that cannot launch before it is shipped, and print what was built so a launch
+      # crash on a device can be diagnosed from this log.
+      - name: 🔎 Inspect built app
+        run: |
+          cd ios/build/Build/Products/Release-iphoneos/Jellify.app
+          ls -la
+          echo "--- Frameworks"; ls Frameworks 2>/dev/null || echo "(none)"
+          echo "--- Info.plist"; plutil -p Info.plist | grep -E "CFBundle(Identifier|Executable|ShortVersionString|Version)\"|MinimumOSVersion|DTSDKName|DTXcode\"|UIDeviceFamily|RCTNewArchEnabled" || true
+          echo "--- Executable"; lipo -archs Jellify; vtool -show-build Jellify | grep -E "platform|minos|sdk" || true
+          echo "--- Signature"; codesign -dv . 2>&1 || true
+
+          if [ ! -s main.jsbundle ]; then
+            echo "::error::main.jsbundle is missing from the app, it would crash on launch"
+            exit 1
+          fi
+          ls -la main.jsbundle
+
+          # Frameworks the app links by @rpath must be embedded, or dyld aborts the launch. The Swift
+          # runtime (libswift*) is also linked by @rpath but is provided by the OS, so skip it.
+          # Warn only: this is a diagnostic, the missing JS bundle above is the certain failure.
+          for lib in $(otool -L Jellify | awk '/@rpath\//{print $1}' | sed 's#@rpath/##' | grep -v '^libswift'); do
+            if [ ! -e "Frameworks/$lib" ]; then
+              echo "::warning::linked by @rpath but not embedded in the app: $lib"
+            fi
+          done
+          echo "--- Linked libraries"; otool -L Jellify | sed 1d
+
       - name: 📦 Package unsigned .ipa
         run: |
           cd ios/build/Build/Products/Release-iphoneos
