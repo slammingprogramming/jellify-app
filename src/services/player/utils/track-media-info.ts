@@ -11,8 +11,11 @@ export async function updateTrackMediaInfo(
 	tracks: TrackItem[],
 	signal?: AbortSignal,
 ): Promise<void> {
-	const updatedTracks = await resolveTrackUrls(tracks, 'stream', signal)
+	const updatedTracks = await resolveTrackUrls(tracks, 'stream')
 
+	// A newer update superseded this one while we were resolving. We only skip applying the
+	// result here - the requests themselves are never cancelled, because they are shared with
+	// (and cached for) the newer update.
 	if (signal?.aborted) return
 
 	await TrackPlayer.updateTracks(updatedTracks)
