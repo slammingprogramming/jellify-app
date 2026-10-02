@@ -101,13 +101,11 @@ export async function handleLibraryShuffle() {
 					})
 				}
 
-				// Shuffle the filtered downloads using Fisher-Yates shuffle
-				const shuffled = [...(filteredDownloads as unknown as TrackItem[])]
-				for (let i = shuffled.length - 1; i > 0; i--) {
-					const j = Math.floor(Math.random() * (i + 1))
-					;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
-				}
-				shuffleJellifyTracks(shuffled)
+				// A DownloadedTrack is a record wrapping the TrackItem (`originalTrack`), it is not
+				// a TrackItem itself - the player needs the TrackItem (id, title, url, ...)
+				const { shuffled } = shuffleJellifyTracks(
+					filteredDownloads.map((download) => download.originalTrack),
+				)
 
 				// Limit to ApiLimits.LibraryShuffle and use as tracks
 				randomTracks = shuffled.slice(0, ApiLimits.LibraryShuffle)
