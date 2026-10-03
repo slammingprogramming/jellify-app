@@ -56,11 +56,45 @@ index 3b6bd3a..4aa86d2 100644
          }
      }
  }
+diff --git a/node_modules/react-native-nitro-player/ios/core/TrackPlayerCore.swift b/node_modules/react-native-nitro-player/ios/core/TrackPlayerCore.swift
+index afabc76..7c1a3da 100644
+--- a/node_modules/react-native-nitro-player/ios/core/TrackPlayerCore.swift
++++ b/node_modules/react-native-nitro-player/ios/core/TrackPlayerCore.swift
+@@ -29,6 +29,9 @@ class TrackPlayerCore: NSObject {
+     // Stall & failure recovery
+     static let maxFailedItemRetries: Int = 3
+     static let failedItemRetryDelay: TimeInterval = 2.0
++    // How many times in a row the AVPlayer may be replaced without any item becoming
++    // ready to play, before giving up (stops a replace -> fail -> replace loop).
++    static let maxPlayerReplacements: Int = 3
+   }
+ 
+   // MARK: - Thread infrastructure
+@@ -81,6 +84,8 @@ class TrackPlayerCore: NSObject {
+   internal var lastKnownPosition: Double = 0
+   // Per-track retry budget for recreating AVPlayerItems that hit status == .failed.
+   internal var failedItemRetryCounts: [String: Int] = [:]
++  // Consecutive AVPlayer replacements since an item last reached readyToPlay.
++  internal var playerReplacementCount = 0
+   // Monitors network path changes (VPN toggle, Wi-Fi band switch) to drive recovery.
+   internal var pathMonitor: NWPathMonitor?
+   // Starts unsatisfied so the first genuine `.satisfied` update is treated as a
 diff --git a/node_modules/react-native-nitro-player/ios/core/TrackPlayerListener.swift b/node_modules/react-native-nitro-player/ios/core/TrackPlayerListener.swift
-index 0d18926..4571113 100644
+index 0d18926..61cbc4f 100644
 --- a/node_modules/react-native-nitro-player/ios/core/TrackPlayerListener.swift
 +++ b/node_modules/react-native-nitro-player/ios/core/TrackPlayerListener.swift
-@@ -152,7 +152,13 @@ extension TrackPlayerCore {
+@@ -145,14 +145,22 @@ extension TrackPlayerCore {
+         NitroPlayerLogger.log("TrackPlayerCore", "👀 Player status changed to: \(player.status.rawValue)")
+         if player.status == .readyToPlay { self.emitStateChange() }
+         else if player.status == .failed {
+-          NitroPlayerLogger.log("TrackPlayerCore", "❌ Player failed")
+-          self.notifyPlaybackStateChange(.stopped, .error)
++          NitroPlayerLogger.log("TrackPlayerCore",
++            "❌ Player failed — \(player.error.map { "\($0)" } ?? "no error")")
++          // A failed AVPlayer never plays again: every item given to it fails at once.
++          self.replaceFailedPlayer(reason: "player status failed")
+         }
+       } else if keyPath == "rate" {
          NitroPlayerLogger.log("TrackPlayerCore", "👀 Rate changed to: \(player.rate)")
          self.emitStateChange()
        } else if keyPath == "timeControlStatus" {
@@ -75,7 +109,14 @@ index 0d18926..4571113 100644
          self.emitStateChange()
        } else if keyPath == "currentItem" {
          NitroPlayerLogger.log("TrackPlayerCore", "👀 Current item changed")
-@@ -417,8 +423,12 @@ extension TrackPlayerCore {
+@@ -411,14 +419,19 @@ extension TrackPlayerCore {
+       self?.playerQueue.async {
+         if item.status == .readyToPlay {
+           NitroPlayerLogger.log("TrackPlayerCore", "✅ Item ready, setting up boundaries")
++          self?.playerReplacementCount = 0
+           // Note: the failure-retry budget is intentionally NOT cleared here. Reaching
+           // .readyToPlay momentarily must not refund retries — otherwise an item that
+           // flaps ready↔failed would bypass `maxFailedItemRetries`. The budget is reset
            // only on a genuine track change (currentItemDidChange) or a real network
            // restore (handleNetworkRestored).
            self?.setupBoundaryTimeObserver()
@@ -90,7 +131,7 @@ index 0d18926..4571113 100644
            // Update now playing info now that duration is available (capture on playerQueue first)
            let state = self?.getStateInternal()
            let queue = self?.getActualQueueInternal() ?? []
-@@ -438,9 +448,13 @@ extension TrackPlayerCore {
+@@ -438,9 +451,13 @@ extension TrackPlayerCore {
      currentItemObservers.append(statusObserver)
  
      let bufferEmptyObserver = item.observe(\.isPlaybackBufferEmpty, options: [.new]) { [weak self] item, _ in
@@ -106,6 +147,22 @@ index 0d18926..4571113 100644
        }
      }
      currentItemObservers.append(bufferEmptyObserver)
+diff --git a/node_modules/react-native-nitro-player/ios/core/TrackPlayerPlayback.swift b/node_modules/react-native-nitro-player/ios/core/TrackPlayerPlayback.swift
+index 8ce8645..153909e 100644
+--- a/node_modules/react-native-nitro-player/ios/core/TrackPlayerPlayback.swift
++++ b/node_modules/react-native-nitro-player/ios/core/TrackPlayerPlayback.swift
+@@ -125,6 +125,11 @@ extension TrackPlayerCore {
+     // interruption flag so a missed AVAudioSession `.ended` can't permanently
+     // wedge recovery off.
+     self.isInterrupted = false
++    if self.player?.status == .failed {
++      // Pressing play on a dead player: replace it (always allowed for an explicit play).
++      self.replaceFailedPlayer(reason: "play() on a failed player", userInitiated: true)
++      return
++    }
+     if let player = self.player {
+       NitroPlayerLogger.log("TrackPlayerCore", "▶️ Player status: \(player.status.rawValue)")
+       if let currentItem = player.currentItem {
 diff --git a/node_modules/react-native-nitro-player/ios/core/TrackPlayerQueueBuild.swift b/node_modules/react-native-nitro-player/ios/core/TrackPlayerQueueBuild.swift
 index aa4edc8..69d91c7 100644
 --- a/node_modules/react-native-nitro-player/ios/core/TrackPlayerQueueBuild.swift
@@ -151,3 +208,113 @@ index aa4edc8..69d91c7 100644
      }
  
      if !assetsToRemove.isEmpty {
+diff --git a/node_modules/react-native-nitro-player/ios/core/TrackPlayerRecovery.swift b/node_modules/react-native-nitro-player/ios/core/TrackPlayerRecovery.swift
+index 45976fd..662172d 100644
+--- a/node_modules/react-native-nitro-player/ios/core/TrackPlayerRecovery.swift
++++ b/node_modules/react-native-nitro-player/ios/core/TrackPlayerRecovery.swift
+@@ -19,6 +19,10 @@ extension TrackPlayerCore {
+   /// Must be called on `playerQueue`.
+   func recoverFailedItem(_ item: AVPlayerItem) {
+     guard let player else { return }
++    if player.status == .failed {
++      replaceFailedPlayer(reason: "item failed on a failed player")
++      return
++    }
+     guard player.currentItem === item else {
+       NitroPlayerLogger.log("TrackPlayerCore", "⚠️ Failed item is not the current item — ignoring")
+       return
+@@ -103,6 +107,85 @@ extension TrackPlayerCore {
+     }
+   }
+ 
++  // MARK: - Failed-player recovery
++
++  /// Replaces the AVQueuePlayer with a new one and rebuilds the queue at the current track.
++  ///
++  /// Once an AVPlayer reaches `status == .failed` it can never play again (Apple: create a
++  /// new player), and after a media services reset every AV object must be recreated. Before
++  /// this, a failed player stayed in place: every item handed to it, including local files,
++  /// failed immediately ("Cannot Complete Action") and playback sat buffering for good.
++  /// Must be called on `playerQueue`.
++  func replaceFailedPlayer(reason: String, userInitiated: Bool = false) {
++    guard !isCasting, let old = player else { return }
++    if !userInitiated && playerReplacementCount >= Constants.maxPlayerReplacements {
++      NitroPlayerLogger.log("TrackPlayerCore",
++        "❌ Not replacing the player again (\(reason)): \(playerReplacementCount) replacements without a playable item")
++      isRecoveringFromStall = false
++      notifyPlaybackStateChange(.stopped, .error)
++      return
++    }
++    playerReplacementCount += 1
++    NitroPlayerLogger.log("TrackPlayerCore",
++      "♻️ Replacing AVPlayer (\(reason), attempt \(playerReplacementCount)) — status \(old.status.rawValue), "
++        + "error: \(old.error.map { "\($0)" } ?? "none")")
++
++    // Detach everything bound to the old player before dropping it.
++    if let obs = boundaryTimeObserver {
++      old.removeTimeObserver(obs)
++      boundaryTimeObserver = nil
++    }
++    currentItemObservers.removeAll()
++    old.removeObserver(self, forKeyPath: "status")
++    old.removeObserver(self, forKeyPath: "rate")
++    old.removeObserver(self, forKeyPath: "timeControlStatus")
++    old.removeObserver(self, forKeyPath: "currentItem")
++    old.pause()
++    old.removeAllItems()
++    for asset in preloadedAssets.values { asset.cancelLoading() }
++    preloadedAssets.removeAll()
++    failedItemRetryCounts.removeAll()
++    isRecoveringFromStall = false
++
++    let newPlayer = AVQueuePlayer()
++    newPlayer.automaticallyWaitsToMinimizeStalling = true
++    newPlayer.actionAtItemEnd = (currentRepeatMode == .track) ? .none : .advance
++    newPlayer.volume = old.volume
++    if #available(iOS 15.0, *) {
++      newPlayer.audiovisualBackgroundPlaybackPolicy = .continuesIfPossible
++    }
++    player = newPlayer
++    // Only the KVO observers: the NotificationCenter ones are not tied to the player.
++    newPlayer.addObserver(self, forKeyPath: "status", options: [.new], context: nil)
++    newPlayer.addObserver(self, forKeyPath: "rate", options: [.new], context: nil)
++    newPlayer.addObserver(self, forKeyPath: "timeControlStatus", options: [.new], context: nil)
++    newPlayer.addObserver(self, forKeyPath: "currentItem", options: [.new], context: nil)
++
++    let resumePosition = lastKnownPosition
++    guard currentTrackIndex >= 0, rebuildQueueFromPlaylistIndex(index: currentTrackIndex) else {
++      NitroPlayerLogger.log("TrackPlayerCore", "♻️ New player ready; nothing to rebuild")
++      return
++    }
++    if resumePosition > 1, newPlayer.currentItem != nil {
++      newPlayer.seek(to: CMTime(seconds: resumePosition, preferredTimescale: CMTimeScale(NSEC_PER_SEC)))
++    }
++    if intendedToPlay {
++      newPlayer.playImmediately(atRate: Float(currentPlaybackSpeed))
++    }
++    emitStateChange()
++  }
++
++  /// The media server process restarted: every AVPlayer, item and the audio session
++  /// configuration are invalid and must be recreated.
++  @objc func handleMediaServicesWereReset(_ notification: Notification) {
++    NitroPlayerLogger.log("TrackPlayerCore", "⚠️ Media services were reset — recreating the player")
++    playerQueue.async { [weak self] in
++      guard let self else { return }
++      self.setupAudioSession()
++      self.replaceFailedPlayer(reason: "media services were reset", userInitiated: true)
++    }
++  }
++
+   // MARK: - Network path monitoring
+ 
+   /// Starts watching the network path. VPN toggles and Wi-Fi band switches
+@@ -163,6 +246,8 @@ extension TrackPlayerCore {
+       name: AVAudioSession.interruptionNotification, object: nil)
+     nc.addObserver(self, selector: #selector(handleAudioRouteChange(_:)),
+       name: AVAudioSession.routeChangeNotification, object: nil)
++    nc.addObserver(self, selector: #selector(handleMediaServicesWereReset(_:)),
++      name: AVAudioSession.mediaServicesWereResetNotification, object: nil)
+   }
+ 
+   /// Phone calls, Siri, other apps, etc. interrupt the audio session. When the

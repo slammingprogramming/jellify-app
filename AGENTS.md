@@ -17,16 +17,16 @@ Update this section whenever you stop, so the next agent resumes exactly here. I
 run out of budget, update this section before anything else.
 
 - **Active work:** the iOS "playback never starts" investigation (section 10).
-- **Last change pushed to `main`:** fixed the log sharing (the first shared log was empty: reading
-  failed on iOS, see section 5), fixed resume restarting transcoded tracks (section 10), and added
-  AVPlayer's waiting reason to the native log (section 7). Its iOS CI build is the first compile of
-  that Swift line; if it failed, fix the patch first.
-- **Waiting on:** the owner to install that build, reproduce (one direct stream and one downloaded
-  track, ~30 s each) and send the output of Settings > Developer > Share playback log.
-- **Next step when the log arrives:** find, for each case, where the chain in section 5 stops:
-  was a URL requested, did media info fail (and why), did a URL reach native, what does the
-  native snapshot show, and what the native log says about the AVPlayerItem (status, errors,
-  `automaticallyWaitsToMinimizeStalling`, rate). Fix the verified cause with a test, build once.
+- **Root cause found from a shared log (section 10):** the native `AVPlayer` itself reached
+  `status == .failed` and was never replaced, so every later item (streams and local files) failed
+  at once with "Cannot Complete Action" and the app sat buffering.
+- **Last change pushed to `main`:** the nitro-player patch now replaces a failed `AVPlayer`
+  (section 7, item 4). Its iOS CI build is the first compile of that Swift; if it failed, fix the
+  patch first (the scratch-repo method in section 7).
+- **Waiting on:** the owner to install that build and test normal use (streams, a downloaded
+  track, rapid skipping). If anything sticks, ask for a new shared log and look for
+  `Player failed —` (now logs `AVPlayer.error`, i.e. *why* it failed) and `♻️ Replacing AVPlayer`.
+- **Open:** what makes the player fail in the first place (unknown; the next log shows the error).
 - **After playback works:** bring in the newer upstream changes the owner wants, one reviewed
   batch at a time, re-testing playback after each.
 
@@ -190,6 +190,14 @@ The nitro-player patch (`ios/core/*.swift`) contains:
    `currentTracks`/`preloadedAssets` on the player queue before using them on the preload queue
    (crashed when switching tracks quickly); the buffer-empty KVO callback hops to the player queue;
    discarded preloaded assets are `cancelLoading()`ed.
+4. **Failed-player recovery** (not in upstream 1.6.1 either): `replaceFailedPlayer` in
+   `TrackPlayerRecovery.swift` detaches the old `AVQueuePlayer` (KVO, time observer, items,
+   preloads), creates a new one, rebuilds the queue at `currentTrackIndex`, seeks to the last
+   position and resumes if playback was intended. Triggered by player status `.failed`, `play()` on a
+   failed player, failed-item recovery on a failed player, and
+   `AVAudioSession.mediaServicesWereResetNotification` (also re-applies the audio session). At most
+   3 replacements in a row without an item reaching `readyToPlay` (an explicit play always may).
+   Rebuilding drops play-next / up-next temporary tracks.
 
 Upstream `1.6.1` also reworks command ordering and queue windowing. It is a candidate upgrade,
 untested here; the JS API changes are additive.
@@ -259,6 +267,12 @@ Native Swift/Kotlin can't be compiled in a Linux sandbox; the iOS CI build is th
   the stall patch for local files. Next step: read a shared playback log (section 5).
   Later report: the first (transcoded) track did play; FLAC direct streams, a downloaded FLAC,
   and then the lowered-quality stream again all sat buffering.
+  **Shared log (cause):** URLs resolved fine for both direct and transcoded tracks, and early
+  tracks played. After rapid skipping, native showed `Player status: 2` (`AVPlayer` `.failed`); from
+  then on every item, including a verified-present local `.flac`, failed within milliseconds with
+  "Cannot Complete Action", item recovery retried on the same dead player, and the state sat at
+  buffering (`AVPlayerWaitingWhileEvaluatingBufferingRateReason`). Fix: section 7, item 4.
+  Not yet known: why the player failed (the log tail did not reach that moment).
 - **Fixed: pausing and resuming a transcoded track restarted it.** `togglePlayback` seeked to 0
   whenever `totalDuration <= position`, and native reports `totalDuration` 0 when the item's
   duration is indefinite (normal for an on-the-fly transcode). Now `hasTrackEnded` requires a known
@@ -305,6 +319,7 @@ here; never paste the log. Before committing changes to this file, search it for
 
 Newest first. One line per change that alters what a future agent should know.
 
+- Root cause of "never plays": a failed `AVPlayer` was never replaced; the patch now replaces it.
 - Log sharing reads with `readFile` (RNFS.read fails on iOS); resume no longer restarts tracks with
   an unknown duration; native log records AVPlayer's waiting reason.
 - Added section 0 (current status / handoff); keep it current, especially before running out of budget.
