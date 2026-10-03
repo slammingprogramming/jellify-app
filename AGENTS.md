@@ -11,6 +11,24 @@ file describes, update this file in the same change. Add a line to the
 [change log](#change-log) at the bottom. Remove or correct anything that stops being true; a wrong
 line here is worse than a missing one.
 
+## 0. Current status and next steps (handoff)
+
+Update this section whenever you stop, so the next agent resumes exactly here. If you are about to
+run out of budget, update this section before anything else.
+
+- **Active work:** the iOS "playback never starts" investigation (section 10).
+- **Last change pushed to `main`:** the shareable playback log (sections 5 and 7). Its iOS CI build
+  is the first compile of the patched `NitroPlayerLogger.swift`; if that build failed, fix the patch
+  first (section 7).
+- **Waiting on:** the owner to install that build, reproduce (one direct stream and one downloaded
+  track, ~30 s each) and send the output of Settings > Developer > Share playback log.
+- **Next step when the log arrives:** find, for each case, where the chain in section 5 stops:
+  was a URL requested, did media info fail (and why), did a URL reach native, what does the
+  native snapshot show, and what the native log says about the AVPlayerItem (status, errors,
+  `automaticallyWaitsToMinimizeStalling`, rate). Fix the verified cause with a test, build once.
+- **After playback works:** bring in the newer upstream changes the owner wants, one reviewed
+  batch at a time, re-testing playback after each.
+
 ---
 
 ## 1. What this is
@@ -275,6 +293,8 @@ here; never paste the log. Before committing changes to this file, search it for
 ## Change log
 
 Newest first. One line per change that alters what a future agent should know.
+
+- Added section 0 (current status / handoff); keep it current, especially before running out of budget.
 
 - Added the playback log (JS + native, shareable from Settings > Developer) and recorded the
   current state of the iOS "never starts playing" investigation.
