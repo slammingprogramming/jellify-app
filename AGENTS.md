@@ -17,9 +17,8 @@ Update this section whenever you stop, so the next agent resumes exactly here. I
 run out of budget, update this section before anything else.
 
 - **Active work:** the iOS "playback never starts" investigation (section 10).
-- **Last change pushed to `main`:** the shareable playback log (sections 5 and 7). Its iOS CI build
-  is the first compile of the patched `NitroPlayerLogger.swift`; if that build failed, fix the patch
-  first (section 7).
+- **Last change pushed to `main`:** the shareable playback log (sections 5 and 7). Its iOS and
+  Android CI builds passed, so the patched `NitroPlayerLogger.swift` compiles.
 - **Waiting on:** the owner to install that build, reproduce (one direct stream and one downloaded
   track, ~30 s each) and send the output of Settings > Developer > Share playback log.
 - **Next step when the log arrives:** find, for each case, where the chain in section 5 stops:
