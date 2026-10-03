@@ -59,13 +59,17 @@ export function logPlayback(message: string): void {
 		.catch(() => undefined)
 }
 
-async function readTail(path: string): Promise<string> {
+/**
+ * Reads the most recent part of a log. Reads the whole file (logs are capped at
+ * {@link MAX_LOG_BYTES}): `RNFS.read(path, length, position)` fails on iOS with the new
+ * architecture ("Objective C type NSInteger is unsupported").
+ */
+export async function readTail(path: string): Promise<string> {
 	if (!(await RNFS.exists(path))) return '(empty)'
 
-	const size = Number((await RNFS.stat(path)).size)
-	const start = Math.max(0, size - SHARED_TAIL_BYTES)
+	const text = await RNFS.readFile(path, 'utf8')
 
-	return RNFS.read(path, size - start, start, 'utf8')
+	return text.length > SHARED_TAIL_BYTES ? text.slice(-SHARED_TAIL_BYTES) : text
 }
 
 /**

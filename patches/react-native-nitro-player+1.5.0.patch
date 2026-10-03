@@ -57,10 +57,25 @@ index 3b6bd3a..4aa86d2 100644
      }
  }
 diff --git a/node_modules/react-native-nitro-player/ios/core/TrackPlayerListener.swift b/node_modules/react-native-nitro-player/ios/core/TrackPlayerListener.swift
-index 0d18926..b19486f 100644
+index 0d18926..4571113 100644
 --- a/node_modules/react-native-nitro-player/ios/core/TrackPlayerListener.swift
 +++ b/node_modules/react-native-nitro-player/ios/core/TrackPlayerListener.swift
-@@ -417,8 +417,12 @@ extension TrackPlayerCore {
+@@ -152,7 +152,13 @@ extension TrackPlayerCore {
+         NitroPlayerLogger.log("TrackPlayerCore", "👀 Rate changed to: \(player.rate)")
+         self.emitStateChange()
+       } else if keyPath == "timeControlStatus" {
+-        NitroPlayerLogger.log("TrackPlayerCore", "👀 TimeControlStatus changed to: \(player.timeControlStatus.rawValue)")
++        // Why AVPlayer is waiting (e.g. toMinimizeStalls, evaluatingBufferingRate, noItemToPlay)
++        // and the current item's status: what "sits buffering forever" comes down to.
++        NitroPlayerLogger.log("TrackPlayerCore",
++          "👀 TimeControlStatus changed to: \(player.timeControlStatus.rawValue)"
++            + ", waiting reason: \(player.reasonForWaitingToPlay?.rawValue ?? "none")"
++            + ", item status: \(player.currentItem.map { String($0.status.rawValue) } ?? "no item")"
++            + ", item error: \(player.currentItem?.error?.localizedDescription ?? "none")")
+         self.emitStateChange()
+       } else if keyPath == "currentItem" {
+         NitroPlayerLogger.log("TrackPlayerCore", "👀 Current item changed")
+@@ -417,8 +423,12 @@ extension TrackPlayerCore {
            // only on a genuine track change (currentItemDidChange) or a real network
            // restore (handleNetworkRestored).
            self?.setupBoundaryTimeObserver()
@@ -75,7 +90,7 @@ index 0d18926..b19486f 100644
            // Update now playing info now that duration is available (capture on playerQueue first)
            let state = self?.getStateInternal()
            let queue = self?.getActualQueueInternal() ?? []
-@@ -438,9 +442,13 @@ extension TrackPlayerCore {
+@@ -438,9 +448,13 @@ extension TrackPlayerCore {
      currentItemObservers.append(statusObserver)
  
      let bufferEmptyObserver = item.observe(\.isPlaybackBufferEmpty, options: [.new]) { [weak self] item, _ in

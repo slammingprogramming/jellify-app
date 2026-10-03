@@ -1,4 +1,5 @@
-import { describeUrl, redact } from '../../src/utils/diagnostics/playback-log'
+import RNFS from 'react-native-fs'
+import { describeUrl, readTail, redact } from '../../src/utils/diagnostics/playback-log'
 
 jest.mock('../../src/stores/auth/utils', () => ({ getApi: jest.fn() }))
 
@@ -38,5 +39,31 @@ describe('describeUrl', () => {
 		expect(describeUrl('file:///var/mobile/a.flac')).toBe('local file')
 		expect(describeUrl('/var/mobile/a.flac')).toBe('local file')
 		expect(describeUrl(`${SERVER}/Audio/1/stream`)).toBe(`${SERVER}/Audio/1/stream`)
+	})
+})
+
+describe('readTail', () => {
+	it('reads the log without RNFS.read, which fails on iOS', async () => {
+		;(RNFS.exists as jest.Mock).mockResolvedValue(true)
+		;(RNFS.readFile as jest.Mock).mockResolvedValue('line 1\nline 2\n')
+
+		await expect(readTail('/caches/jellify-playback.log')).resolves.toBe('line 1\nline 2\n')
+		expect(RNFS.read).not.toHaveBeenCalled()
+	})
+
+	it('keeps only the most recent part of a long log', async () => {
+		;(RNFS.exists as jest.Mock).mockResolvedValue(true)
+		;(RNFS.readFile as jest.Mock).mockResolvedValue('old'.repeat(100_000) + 'NEWEST')
+
+		const tail = await readTail('/caches/jellify-playback.log')
+
+		expect(tail.length).toBe(150_000)
+		expect(tail.endsWith('NEWEST')).toBe(true)
+	})
+
+	it('says so when there is no log yet', async () => {
+		;(RNFS.exists as jest.Mock).mockResolvedValue(false)
+
+		await expect(readTail('/caches/nitroplayer.log')).resolves.toBe('(empty)')
 	})
 })

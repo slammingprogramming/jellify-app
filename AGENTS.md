@@ -17,8 +17,10 @@ Update this section whenever you stop, so the next agent resumes exactly here. I
 run out of budget, update this section before anything else.
 
 - **Active work:** the iOS "playback never starts" investigation (section 10).
-- **Last change pushed to `main`:** the shareable playback log (sections 5 and 7). Its iOS and
-  Android CI builds passed, so the patched `NitroPlayerLogger.swift` compiles.
+- **Last change pushed to `main`:** fixed the log sharing (the first shared log was empty: reading
+  failed on iOS, see section 5), fixed resume restarting transcoded tracks (section 10), and added
+  AVPlayer's waiting reason to the native log (section 7). Its iOS CI build is the first compile of
+  that Swift line; if it failed, fix the patch first.
 - **Waiting on:** the owner to install that build, reproduce (one direct stream and one downloaded
   track, ~30 s each) and send the output of Settings > Developer > Share playback log.
 - **Next step when the log arrives:** find, for each case, where the chain in section 5 stops:
@@ -149,6 +151,8 @@ Important facts and traps:
   changes); the patched native logger writes `Caches/nitroplayer.log`. Settings > Developer
   (enable Developer Options) > **Share playback log** shares the tail of both. `redact()` strips the
   server address, API keys and tokens; keep it that way, and never commit a shared log.
+  Do not use `RNFS.read(path, length, position)`: on iOS (new architecture) it rejects with
+  "Objective C type NSInteger is unsupported". `readTail` uses `readFile` and slices instead.
 
 ## 6. Animation driver and dependency pins
 
@@ -179,7 +183,9 @@ The nitro-player patch (`ios/core/*.swift`) contains:
    re-stalled instantly. Now only downloaded (file URL) items skip stall waiting.
 2. **Logging in release builds:** `NitroPlayerLogger` is enabled and also appends to
    `Caches/nitroplayer.log` (capped at ~1 MB), read by the in-app log sharing (section 5). It was
-   compiled out of release builds before, which made device problems undiagnosable.
+   compiled out of release builds before, which made device problems undiagnosable. The
+   `timeControlStatus` log line also records `reasonForWaitingToPlay` and the current item's
+   status and error.
 3. **Thread-safety ports from upstream `1.6.1`:** `preloadUpcomingTracks` snapshots
    `currentTracks`/`preloadedAssets` on the player queue before using them on the preload queue
    (crashed when switching tracks quickly); the buffer-empty KVO callback hops to the player queue;
@@ -251,6 +257,12 @@ Native Swift/Kotlin can't be compiled in a Linux sandbox; the iOS CI build is th
   streams, and the native player not starting even with a playable source. Ruled out by reading
   code: `URLSearchParams` (polyfilled), a periodic URL-request loop (requests are event-driven),
   the stall patch for local files. Next step: read a shared playback log (section 5).
+  Later report: the first (transcoded) track did play; FLAC direct streams, a downloaded FLAC,
+  and then the lowered-quality stream again all sat buffering.
+- **Fixed: pausing and resuming a transcoded track restarted it.** `togglePlayback` seeked to 0
+  whenever `totalDuration <= position`, and native reports `totalDuration` 0 when the item's
+  duration is indefinite (normal for an on-the-fly transcode). Now `hasTrackEnded` requires a known
+  duration. Test: `jest/functional/Player/toggle-playback.test.ts`.
 - The race and stall fixes in section 7, the queue-duplicate fixes, and the launch-crash fix are
   verified by tests and CI compile only. **On-device confirmation is still pending** for
   stall-recovery behaviour and rapid-switching stability.
@@ -293,6 +305,8 @@ here; never paste the log. Before committing changes to this file, search it for
 
 Newest first. One line per change that alters what a future agent should know.
 
+- Log sharing reads with `readFile` (RNFS.read fails on iOS); resume no longer restarts tracks with
+  an unknown duration; native log records AVPlayer's waiting reason.
 - Added section 0 (current status / handoff); keep it current, especially before running out of budget.
 
 - Added the playback log (JS + native, shareable from Settings > Developer) and recorded the
