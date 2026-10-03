@@ -124,7 +124,14 @@ Important facts and traps:
   has no such field (the bridge drops it); native reads `extraPayload.headers`. Streams currently
   work without it, so the server evidently accepts the stream URL as built. Unverified edge case.
 - Playback diagnostics: `services/player/utils/playback-diagnostics.ts` shows a message when the
-  player errors or buffers for 20s, naming the codec and whether the server is transcoding.
+  player errors or buffers for 20s, naming the codec and whether the server is transcoding
+  ("unknown format, direct" means the JS copy of the track never got media info, i.e. its URL was
+  never resolved and applied). When stuck it also logs a snapshot of the native player's state.
+- **Playback log** (`src/utils/diagnostics/playback-log.ts`): JS writes `Caches/jellify-playback.log`
+  (URL requests, media-info failures with their reason, URLs handed to native, track and state
+  changes); the patched native logger writes `Caches/nitroplayer.log`. Settings > Developer
+  (enable Developer Options) > **Share playback log** shares the tail of both. `redact()` strips the
+  server address, API keys and tokens; keep it that way, and never commit a shared log.
 
 ## 6. Animation driver and dependency pins
 
@@ -153,7 +160,10 @@ The nitro-player patch (`ios/core/*.swift`) contains:
 1. **Stall handling.** Upstream turns off AVPlayer's `automaticallyWaitsToMinimizeStalling` after
    the first item is ready; a network underrun then left playback stopped and pressing play
    re-stalled instantly. Now only downloaded (file URL) items skip stall waiting.
-2. **Thread-safety ports from upstream `1.6.1`:** `preloadUpcomingTracks` snapshots
+2. **Logging in release builds:** `NitroPlayerLogger` is enabled and also appends to
+   `Caches/nitroplayer.log` (capped at ~1 MB), read by the in-app log sharing (section 5). It was
+   compiled out of release builds before, which made device problems undiagnosable.
+3. **Thread-safety ports from upstream `1.6.1`:** `preloadUpcomingTracks` snapshots
    `currentTracks`/`preloadedAssets` on the player queue before using them on the preload queue
    (crashed when switching tracks quickly); the buffer-empty KVO callback hops to the player queue;
    discarded preloaded assets are `cancelLoading()`ed.
@@ -215,11 +225,15 @@ Native Swift/Kotlin can't be compiled in a Linux sandbox; the iOS CI build is th
 
 ## 10. Known issues and open questions
 
-- **iOS: music not starting after a fresh install of the latest builds: UNRESOLVED.** Symptoms
-  reported: tapping tracks does nothing / buffers. Not yet known whether it is the format
-  (direct vs transcoded; AVPlayer and FLAC/ADTS transcodes are suspects), the server/proxy, or the
-  app. The playback-diagnostics message (section 5) exists to find out. Useful tests: does a
-  downloaded track play; do the same tracks play on Android; what codec/mode the message reports.
+- **iOS: music never starts on fresh installs of this fork's builds: UNRESOLVED.** Upstream's
+  official build plays the same library *sometimes*; the official Jellyfin app always works.
+  Observed with a mostly-FLAC library: direct streams sit buffering with "unknown format, direct"
+  (the URL is never resolved/applied); with a lower streaming quality the URL does resolve
+  ("flac, transcoded") but it still sits buffering; a **downloaded** track (local file, no URL
+  lookup) also sits buffering. So there are likely two problems: URL resolution for direct
+  streams, and the native player not starting even with a playable source. Ruled out by reading
+  code: `URLSearchParams` (polyfilled), a periodic URL-request loop (requests are event-driven),
+  the stall patch for local files. Next step: read a shared playback log (section 5).
 - The race and stall fixes in section 7, the queue-duplicate fixes, and the launch-crash fix are
   verified by tests and CI compile only. **On-device confirmation is still pending** for
   stall-recovery behaviour and rapid-switching stability.
@@ -262,6 +276,8 @@ here; never paste the log. Before committing changes to this file, search it for
 
 Newest first. One line per change that alters what a future agent should know.
 
+- Added the playback log (JS + native, shareable from Settings > Developer) and recorded the
+  current state of the iOS "never starts playing" investigation.
 - Initial version. Records: build/CI setup for the fork, the iOS URL-resolution race fix, native
   duration for progress, library-shuffle fix, queue duplicate fixes, stall-handling and
   thread-safety patch for nitro-player 1.5.0, launch-crash fix (Tamagui pinned to 2.7.4), and the

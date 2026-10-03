@@ -1,3 +1,61 @@
+diff --git a/node_modules/react-native-nitro-player/ios/core/NitroPlayerLogger.swift b/node_modules/react-native-nitro-player/ios/core/NitroPlayerLogger.swift
+index 3b6bd3a..4aa86d2 100644
+--- a/node_modules/react-native-nitro-player/ios/core/NitroPlayerLogger.swift
++++ b/node_modules/react-native-nitro-player/ios/core/NitroPlayerLogger.swift
+@@ -8,15 +8,48 @@
+ import Foundation
+ 
+ class NitroPlayerLogger {
+-    #if DEBUG
++    // Enabled in release builds too: the app reads Caches/nitroplayer.log so a user can share it
++    // (Settings > Developer > Share playback log). Release builds have no other record.
+     static var isEnabled = true
+-    #else
+-    static var isEnabled = false
+-    #endif
++
++    private static let fileQueue = DispatchQueue(label: "com.nitroplayer.logfile", qos: .utility)
++    private static let maxFileBytes: UInt64 = 1_000_000
++    private static let fileURL: URL? = FileManager.default
++        .urls(for: .cachesDirectory, in: .userDomainMask).first?
++        .appendingPathComponent("nitroplayer.log")
++    private static let timestampFormatter: ISO8601DateFormatter = {
++        let formatter = ISO8601DateFormatter()
++        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
++        return formatter
++    }()
+ 
+     static func log(_ header: String = "NitroPlayer", _ message: @autoclosure () -> String) {
+         if isEnabled {
+-            print("[\(header)] \(message())")
++            let line = "[\(header)] \(message())"
++            print(line)
++            let date = Date()
++            fileQueue.async {
++                NitroPlayerLogger.append("\(NitroPlayerLogger.timestampFormatter.string(from: date)) \(line)\n")
++            }
++        }
++    }
++
++    /// Runs on fileQueue only. Starts a new file once the current one passes maxFileBytes.
++    private static func append(_ text: String) {
++        guard let url = fileURL, let data = text.data(using: .utf8) else { return }
++        let fileManager = FileManager.default
++
++        if let size = (try? fileManager.attributesOfItem(atPath: url.path))?[.size] as? UInt64,
++           size > maxFileBytes {
++            try? fileManager.removeItem(at: url)
++        }
++
++        if let handle = try? FileHandle(forWritingTo: url) {
++            defer { try? handle.close() }
++            _ = try? handle.seekToEnd()
++            try? handle.write(contentsOf: data)
++        } else {
++            try? data.write(to: url)
+         }
+     }
+ }
 diff --git a/node_modules/react-native-nitro-player/ios/core/TrackPlayerListener.swift b/node_modules/react-native-nitro-player/ios/core/TrackPlayerListener.swift
 index 0d18926..b19486f 100644
 --- a/node_modules/react-native-nitro-player/ios/core/TrackPlayerListener.swift

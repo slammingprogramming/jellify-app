@@ -5,6 +5,7 @@ import buildAudioApiUrl, { buildTranscodedAudioApiUrl } from '../mapping/item-to
 import getTrackDto from '../mapping/track-extra-payload'
 import { convertRunTimeTicksToSeconds } from '../mapping/ticks-to-seconds'
 import { SourceType } from '@/src/types/JellifyTrack'
+import { logPlayback } from '../diagnostics/playback-log'
 
 export default async function resolveTrackUrls(
 	trackItems: TrackItem[],
@@ -16,6 +17,14 @@ export default async function resolveTrackUrls(
 			return [track.id, playbackInfo] as [string, PlaybackInfoResponse]
 		}),
 	)
+
+	playbackInfoEntries.forEach((entry, index) => {
+		if (entry.status === 'rejected') {
+			const reason =
+				entry.reason instanceof Error ? entry.reason.message : String(entry.reason)
+			logPlayback(`media info (${source}) failed for ${trackItems[index].title}: ${reason}`)
+		}
+	})
 
 	const playbackInfoById = new Map(
 		playbackInfoEntries

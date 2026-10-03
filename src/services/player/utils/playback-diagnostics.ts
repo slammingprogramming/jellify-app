@@ -1,5 +1,6 @@
 import Toast from 'react-native-toast-message'
-import { Reason, TrackItem, TrackPlayerState } from 'react-native-nitro-player'
+import { Reason, TrackItem, TrackPlayer, TrackPlayerState } from 'react-native-nitro-player'
+import { describeUrl, logPlayback } from '../../../utils/diagnostics/playback-log'
 import { MediaStreamType } from '@jellyfin/sdk/lib/generated-client/models'
 import { getTrackMediaSourceInfo } from '../../../utils/mapping/track-extra-payload'
 import { captureWarning } from '../../../utils/logging'
@@ -56,11 +57,37 @@ export function reportPlaybackDiagnostics(
 		})
 	} else if (state === 'buffering') {
 		stuckBufferingTimer = setTimeout(() => {
+			logNativeSnapshot(track)
 			Toast.show({
 				type: 'info',
 				text1: 'Still buffering',
 				text2: `${track.title} (${describePlaybackSource(track)})`,
 			})
 		}, STUCK_BUFFERING_TIMEOUT)
+	}
+}
+
+/**
+ * Records what the native player itself holds while playback is stuck, e.g. whether it ever
+ * received a URL or file for the track.
+ */
+async function logNativeSnapshot(track: TrackItem): Promise<void> {
+	try {
+		const [state, needingUrls] = await Promise.all([
+			TrackPlayer.getState(),
+			TrackPlayer.getTracksNeedingUrls(),
+		])
+		const nativeTrack = state.currentTrack as TrackItem | null | undefined
+
+		logPlayback(
+			`stuck buffering on ${track.title}: native state ${state.currentState}, index ${state.currentIndex}, ` +
+				`position ${state.currentPosition}, duration ${state.totalDuration}, ` +
+				`native track ${nativeTrack?.title ?? 'none'} url ${describeUrl(nativeTrack?.url)}, ` +
+				`${needingUrls.length} track(s) still without a URL`,
+		)
+	} catch (error) {
+		logPlayback(
+			`stuck buffering on ${track.title}; reading native state failed: ${String(error)}`,
+		)
 	}
 }

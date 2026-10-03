@@ -13,6 +13,7 @@ import { useDeveloperOptionsEnabled, usePrId } from '../../stores/settings/devel
 import { downloadPRUpdate } from '../../services/ota/pull-request'
 import SendMetricsAndCrashDataSetting from '../../components/Settings/components/settings/send-metrics-and-crash-data'
 import { applyHapticFeedback } from '../../utils/haptics'
+import { sharePlaybackLog } from '../../utils/diagnostics/playback-log'
 
 export default function PrivacyDeveloperScreen(): React.JSX.Element {
 	const { bottom } = useSafeAreaInsets()
@@ -117,6 +118,23 @@ export default function PrivacyDeveloperScreen(): React.JSX.Element {
 									Current PR ID: {prId}
 								</SizableText>
 							)}
+
+							<SizableText size='$2' color='$borderColor' paddingTop='$2'>
+								Share a log of recent playback to help diagnose problems. Your
+								server address and keys are removed.
+							</SizableText>
+							<Button
+								size='$3'
+								testID='share-playback-log-button'
+								icon={<Icon name='share-variant' small />}
+								onPress={() =>
+									sharePlaybackLog().catch((error) =>
+										Alert.alert('Could not share the log', String(error)),
+									)
+								}
+							>
+								Share playback log
+							</Button>
 						</YStack>
 					)}
 				</SettingsSection>

@@ -11,6 +11,7 @@ import { captureError } from '../../../utils/logging'
 import LoggingContext from '../../../utils/logging/enums'
 import { updateTrackMediaInfo } from './track-media-info'
 import { reportPlaybackDiagnostics } from './playback-diagnostics'
+import { describeUrl, logPlayback } from '../../../utils/diagnostics/playback-log'
 import reportPlaybackCompleted from '../../../api/mutations/playback/functions/playback-completed'
 import { AppState, Platform } from 'react-native'
 import reportPlaybackStarted from '../../../api/mutations/playback/functions/playback-started'
@@ -61,11 +62,22 @@ export async function onTracksNeedUpdate(tracks: TrackItem[], lookahead: number)
 
 	const tracksToUpdate = lookahead > 0 ? tracks.slice(0, lookahead) : tracks
 
+	logPlayback(
+		`needs URLs: ${tracks.length} track(s), resolving ${tracksToUpdate.length}: ${tracksToUpdate.map((t) => t.title).join(' | ')}`,
+	)
+
 	console.debug(`[Player Event] Updating media info for track lookahead ${tracksToUpdate.length}`)
 
 	trackUpdateAbortController = Platform.OS === 'ios' ? new AbortController() : null
 
-	await updateTrackMediaInfo(tracksToUpdate, trackUpdateAbortController?.signal)
+	try {
+		await updateTrackMediaInfo(tracksToUpdate, trackUpdateAbortController?.signal)
+	} catch (error) {
+		logPlayback(
+			`resolving URLs threw: ${error instanceof Error ? error.message : String(error)}`,
+		)
+		captureError(error, LoggingContext.NitroPlayer, 'Failed to resolve track URLs')
+	}
 }
 
 /**
@@ -87,6 +99,10 @@ export async function onChangeTrack(track: TrackItem, reason?: Reason) {
 	const { queue, currentIndex: prevIndex } = usePlayerQueueStore.getState()
 
 	trackMarkedAsListened = false
+
+	logPlayback(
+		`track change (${reason ?? 'no reason'}): ${track.title}, url: ${describeUrl(track.url)}`,
+	)
 
 	// The previous track's measured duration no longer applies. Until the player measures the
 	// new one, the duration falls back to the track's metadata.
@@ -172,6 +188,8 @@ export function onPlaybackStateChange(state: TrackPlayerState, reason: Reason | 
 
 	const prevState = currentPlaybackState
 	currentPlaybackState = state
+
+	logPlayback(`state ${state}${reason ? ` (${reason})` : ''}`)
 
 	if (currentTrack) reportPlaybackDiagnostics(state, reason, currentTrack)
 
